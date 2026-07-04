@@ -80,7 +80,7 @@ O projeto segue uma separação clara entre **lógica** (`CrapsGame`) e **aprese
 
 ---
 
-## Tecnologias usadas
+##  :wrench: Tecnologias usadas
 
 - **Python 3** (biblioteca padrão apenas: `random`, `time`, `os`, `enum`, `itertools`)
 - Sem dependências externas — roda em qualquer ambiente com Python instalado
