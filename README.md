@@ -80,13 +80,13 @@ O projeto segue uma separação clara entre **lógica** (`CrapsGame`) e **aprese
 
 ---
 
-##  Tecnologias usadas
+## Tecnologias usadas
 
 - **Python 3** (biblioteca padrão apenas: `random`, `time`, `os`, `enum`, `itertools`)
 - Sem dependências externas — roda em qualquer ambiente com Python instalado
 
 ---
 
-##  Licença
+##  Licença 
 
 Projeto livre para fins de estudo e prática de Programação Orientada a Objetos.
