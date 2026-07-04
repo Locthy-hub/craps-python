@@ -1,0 +1,553 @@
+"""
+╔══════════════════════════════════════════════╗
+║           🎲  CRAPS  🎲                      ║
+║      Jogo de dados clássico de cassino       ║
+╚══════════════════════════════════════════════╝
+"""
+
+import random
+import time
+import os
+from enum import Enum
+
+
+
+#  ENUMS
+
+
+class GamePhase(Enum):
+    COME_OUT = "come_out"   # Primeiro rolar — sem point definido
+    POINT    = "point"      # Point foi definido, jogador tenta repetir
+
+
+class RollResult(Enum):
+    NATURAL      = "natural"      # 7 ou 11 no come-out → vitória
+    CRAPS        = "craps"        # 2, 3 ou 12 no come-out → derrota
+    POINT_SET    = "point_set"    # 4,5,6,8,9,10 no come-out → define point
+    POINT_HIT    = "point_hit"    # Acertou o point → vitória
+    SEVEN_OUT    = "seven_out"    # Tirou 7 após point → derrota
+    CONTINUE     = "continue"     # Nenhum resultado decisivo ainda
+
+
+
+#  DADOS
+
+class Dice:
+    """Representa um par de dados de seis faces."""
+
+    FACES = {
+        1: "⚀", 2: "⚁", 3: "⚂",
+        4: "⚃", 5: "⚄", 6: "⚅",
+    }
+
+    def __init__(self):
+        self.die1: int = 0
+        self.die2: int = 0
+
+    def roll(self) -> int:
+        """Rola os dois dados e retorna a soma."""
+        self.die1 = random.randint(1, 6)
+        self.die2 = random.randint(1, 6)
+        return self.total
+
+    @property
+    def total(self) -> int:
+        return self.die1 + self.die2
+
+    def display(self) -> str:
+        return f"  {self.FACES[self.die1]}  {self.FACES[self.die2]}  →  {self.total}"
+
+
+
+#  APOSTAS
+
+
+class Bet:
+    """Representa uma aposta do jogador."""
+
+    PASS_LINE    = "Pass Line"     # Aposta principal: a favor do shooter
+    DONT_PASS    = "Don't Pass"    # Aposta contrária ao shooter
+
+    def __init__(self, bet_type: str, amount: float):
+        if bet_type not in (self.PASS_LINE, self.DONT_PASS):
+            raise ValueError(f"Tipo de aposta inválido: {bet_type}")
+        self.bet_type = bet_type
+        self.amount   = amount
+
+    def payout(self, won: bool) -> float:
+        """Retorna o lucro/prejuízo da aposta (1:1 para Pass Line e Don't Pass)."""
+        return self.amount if won else -self.amount
+
+    def __str__(self):
+        return f"{self.bet_type}: R${self.amount:.2f}"
+
+
+
+#  JOGADOR
+
+
+class Player:
+    """Representa o jogador com saldo e histórico."""
+
+    def __init__(self, name: str, starting_balance: float = 500.0):
+        self.name    = name
+        self.balance = starting_balance
+        self.wins    = 0
+        self.losses  = 0
+        self.bet: Bet | None = None
+
+    def place_bet(self, bet_type: str, amount: float):
+        if amount <= 0:
+            raise ValueError("A aposta deve ser maior que zero.")
+        if amount > self.balance:
+            raise ValueError(f"Saldo insuficiente. Saldo atual: R${self.balance:.2f}")
+        self.bet = Bet(bet_type, amount)
+
+    def resolve_bet(self, won: bool):
+        """Aplica o resultado da aposta ao saldo."""
+        if self.bet is None:
+            return
+        profit = self.bet.payout(won)
+        self.balance += profit
+        if won:
+            self.wins += 1
+        else:
+            self.losses += 1
+        self.bet = None
+
+    @property
+    def stats(self) -> str:
+        total = self.wins + self.losses
+        pct = (self.wins / total * 100) if total > 0 else 0
+        return (
+            f"  Vitórias : {self.wins}\n"
+            f"  Derrotas : {self.losses}\n"
+            f"  Win rate : {pct:.1f}%\n"
+            f"  Saldo    : R${self.balance:.2f}"
+        )
+
+
+
+#  MOTOR DO JOGO
+
+
+class CrapsGame:
+    """Gerencia toda a lógica de uma rodada de Craps."""
+
+    COME_OUT_WIN  = {7, 11}
+    COME_OUT_LOSE = {2, 3, 12}
+    POINT_NUMBERS = {4, 5, 6, 8, 9, 10}
+
+    def __init__(self, player: Player):
+        self.player = player
+        self.dice   = Dice()
+        self.phase  = GamePhase.COME_OUT
+        self.point: int | None = None
+
+    def reset_round(self):
+        self.phase = GamePhase.COME_OUT
+        self.point = None
+
+    def roll(self) -> tuple[int, RollResult]:
+        """Rola os dados e interpreta o resultado conforme a fase atual."""
+        total = self.dice.roll()
+
+        if self.phase == GamePhase.COME_OUT:
+            if total in self.COME_OUT_WIN:
+                result = RollResult.NATURAL
+            elif total in self.COME_OUT_LOSE:
+                result = RollResult.CRAPS
+            else:                          # 4, 5, 6, 8, 9 ou 10
+                self.point = total
+                self.phase = GamePhase.POINT
+                result = RollResult.POINT_SET
+        else:  # POINT phase
+            if total == self.point:
+                result = RollResult.POINT_HIT
+            elif total == 7:
+                result = RollResult.SEVEN_OUT
+            else:
+                result = RollResult.CONTINUE
+
+        return total, result
+
+    def resolve(self, result: RollResult) -> bool | None:
+        """
+        Decide se a aposta foi ganha/perdida.
+        Retorna True (ganhou), False (perdeu) ou None (jogo continua).
+        """
+        pass_line = self.player.bet and self.player.bet.bet_type == Bet.PASS_LINE
+
+        if result == RollResult.NATURAL:
+            return True  if pass_line else False
+        if result == RollResult.CRAPS:
+            return False if pass_line else True
+        if result == RollResult.POINT_HIT:
+            return True  if pass_line else False
+        if result == RollResult.SEVEN_OUT:
+            return False if pass_line else True
+        return None  # CONTINUE ou POINT_SET → jogo ainda não acabou
+
+
+
+#  INTERFACE DE TERMINAL
+
+
+class Terminal:
+    """Helpers de formatação para o terminal."""
+
+    RESET  = "\033[0m"
+    BOLD   = "\033[1m"
+    GREEN  = "\033[92m"
+    RED    = "\033[91m"
+    YELLOW = "\033[93m"
+    CYAN   = "\033[96m"
+    WHITE  = "\033[97m"
+    DIM    = "\033[2m"
+
+    @staticmethod
+    def clear():
+        os.system("cls" if os.name == "nt" else "clear")
+
+    @staticmethod
+    def banner():
+        print(f"""
+{Terminal.YELLOW}╔══════════════════════════════════════════════╗
+║       🎲  C R A P S  —  Cassino Python  🎲   ║
+╚══════════════════════════════════════════════╝{Terminal.RESET}
+""")
+
+    @staticmethod
+    def separator():
+        print(f"{Terminal.DIM}{'─' * 48}{Terminal.RESET}")
+
+    @staticmethod
+    def success(msg: str):
+        print(f"\n{Terminal.GREEN}{Terminal.BOLD}✔  {msg}{Terminal.RESET}\n")
+
+    @staticmethod
+    def error(msg: str):
+        print(f"\n{Terminal.RED}{Terminal.BOLD}✘  {msg}{Terminal.RESET}\n")
+
+    @staticmethod
+    def info(msg: str):
+        print(f"{Terminal.CYAN}ℹ  {msg}{Terminal.RESET}")
+
+    @staticmethod
+    def warn(msg: str):
+        print(f"{Terminal.YELLOW}⚠  {msg}{Terminal.RESET}")
+
+    @staticmethod
+    def roll_animation(dice: Dice):
+        """Animação simples de rolagem."""
+        frames = ["🎲 . . .", "🎲 🎲 . .", "🎲 🎲 🎲 ."]
+        for frame in frames:
+            print(f"\r  {frame}", end="", flush=True)
+            time.sleep(0.25)
+        print(f"\r{' ' * 20}\r", end="")
+        print(f"  {dice.display()}")
+
+    @staticmethod
+    def intro():
+        """Intro animada exibida uma vez ao abrir o jogo."""
+        T = Terminal
+
+        #  1. Tela de abertura 
+        T.clear()
+        logo_lines = [
+            "  ╔══════════════════════════════════════════════╗",
+            "  ║                                              ║",
+            "  ║      🎲   C R A P S   🎲                    ║",
+            "  ║        Cassino Python — Terminal             ║",
+            "  ║                                              ║",
+            "  ╚══════════════════════════════════════════════╝",
+        ]
+        for line in logo_lines:
+            print(f"{T.YELLOW}{line}{T.RESET}")
+            time.sleep(0.07)
+
+        time.sleep(0.4)
+
+        # 2. Animação de dados rolando 
+        print()
+        faces = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
+        import itertools
+        spinner = itertools.cycle(faces)
+        for _ in range(18):
+            d1 = next(spinner)
+            d2 = next(spinner)
+            print(f"\r  {T.YELLOW}{d1}  {d2}{T.RESET}  rolando...", end="", flush=True)
+            time.sleep(0.09)
+        # Para num 7 (⚂ + ⚃ = 3+4)
+        print(f"\r  {T.YELLOW}⚂  ⚃{T.RESET}  →  {T.BOLD}{T.GREEN}7 — Natural! Bem-vindo ao cassino!{T.RESET}   ")
+        time.sleep(0.6)
+
+        #  3. Guia rápido animado 
+        print()
+        T.separator()
+        guide = [
+            (T.BOLD + "  📜  COMO JOGAR — GUIA RÁPIDO" + T.RESET, 0.05),
+            ("", 0),
+            (f"  {T.YELLOW}FASE 1 — COME-OUT{T.RESET} (primeiro rolar)", 0.03),
+            (f"  {T.DIM}{'─'*44}{T.RESET}", 0),
+            (f"  Tirou  {T.GREEN}7 ou 11{T.RESET}          → {T.GREEN}✔ Pass Line GANHA{T.RESET}", 0.03),
+            (f"  Tirou  {T.RED}2, 3 ou 12{T.RESET}       → {T.RED}✘ Pass Line PERDE{T.RESET}", 0.03),
+            (f"  Tirou  {T.CYAN}4,5,6,8,9,10{T.RESET}    → 📍 Vira o POINT", 0.03),
+            ("", 0),
+            (f"  {T.YELLOW}FASE 2 — POINT PHASE{T.RESET} (após point ser definido)", 0.03),
+            (f"  {T.DIM}{'─'*44}{T.RESET}", 0),
+            (f"  Repetir o point        → {T.GREEN}✔ Pass Line GANHA{T.RESET}", 0.03),
+            (f"  Tirar 7 (seven-out)    → {T.RED}✘ Pass Line PERDE{T.RESET}", 0.03),
+            (f"  Qualquer outro         → ⏳ Continua rolando", 0.03),
+            ("", 0),
+            (f"  {T.YELLOW}APOSTAS{T.RESET}", 0.03),
+            (f"  {T.DIM}{'─'*44}{T.RESET}", 0),
+            (f"  {T.GREEN}Pass Line{T.RESET}   → você torce PELO shooter (acima)", 0.03),
+            (f"  {T.RED}Don't Pass{T.RESET}  → você torce CONTRA o shooter (inverso)", 0.03),
+            (f"  Ambas pagam {T.BOLD}1:1{T.RESET} — lucro igual à aposta", 0.03),
+            ("", 0),
+        ]
+        for line, delay in guide:
+            print(line)
+            if delay:
+                time.sleep(delay)
+
+        T.separator()
+        time.sleep(0.3)
+
+        # 4. Estrutura do código 
+        print()
+        print(f"  {T.BOLD}🐍  ESTRUTURA DO CÓDIGO{T.RESET}")
+        print()
+        classes = [
+            ("Dice",             "⚄", "Rola os dados e exibe os emojis"),
+            ("Bet",              "💰", "Guarda tipo e valor da aposta, calcula payout"),
+            ("Player",           "👤", "Saldo, histórico e apostas do jogador"),
+            ("CrapsGame",        "🧠", "Toda a lógica e regras — sem nenhum print()"),
+            ("Terminal",         "🖥️ ", "Cores, animações e inputs do terminal"),
+            ("CrapsController",  "🎮", "Orquestra menus, rodadas e fluxo do jogo"),
+        ]
+        for name, icon, desc in classes:
+            print(f"  {icon}  {T.CYAN}{name:<18}{T.RESET}{T.DIM}{desc}{T.RESET}")
+            time.sleep(0.1)
+
+        print()
+        T.separator()
+
+        # 5. Conceitos de OOP usados 
+        print()
+        print(f"  {T.BOLD}📚  CONCEITOS DE OOP NESTE JOGO{T.RESET}")
+        print()
+        concepts = [
+            ("Enum",              "Constantes nomeadas para fases e resultados"),
+            ("@property",         "total dos dados como atributo, não método"),
+            ("@staticmethod",     "Métodos de Terminal que não usam self"),
+            ("Composição",        "Player tem uma Bet, CrapsGame tem um Dice"),
+            ("Encapsulamento",    "CrapsGame não sabe de prints; Terminal não sabe de regras"),
+            ("Type hints",        "-> int, Bet | None  para clareza e segurança"),
+            ("SRP",               "Cada classe tem uma única responsabilidade"),
+        ]
+        for concept, explanation in concepts:
+            print(f"  {T.YELLOW}▸ {T.BOLD}{concept:<18}{T.RESET}  {T.DIM}{explanation}{T.RESET}")
+            time.sleep(0.08)
+
+        print()
+        T.separator()
+        print()
+
+        # 6. Prompt para iniciar 
+        input(f"  {T.WHITE}Pressione {T.YELLOW}ENTER{T.WHITE} para entrar no cassino...{T.RESET} ")
+
+    @staticmethod
+    def input_int(prompt: str, min_val: int, max_val: int) -> int:
+        while True:
+            try:
+                val = int(input(f"{Terminal.WHITE}{prompt}{Terminal.RESET} "))
+                if min_val <= val <= max_val:
+                    return val
+                Terminal.warn(f"Digite um número entre {min_val} e {max_val}.")
+            except ValueError:
+                Terminal.warn("Entrada inválida. Use apenas números.")
+
+    @staticmethod
+    def input_float(prompt: str, min_val: float, max_val: float) -> float:
+        while True:
+            try:
+                val = float(input(f"{Terminal.WHITE}{prompt}{Terminal.RESET} "))
+                if min_val <= val <= max_val:
+                    return val
+                Terminal.warn(f"Valor fora do permitido ({min_val:.2f}–{max_val:.2f}).")
+            except ValueError:
+                Terminal.warn("Entrada inválida. Use números (ex: 50 ou 50.5).")
+
+
+
+#  CONTROLADOR PRINCIPAL
+# 
+
+class CrapsController:
+    """Orquestra menus, rodadas e fluxo completo do jogo."""
+
+    MIN_BET = 1.0
+
+    def __init__(self):
+        self.player: Player | None = None
+        self.game:   CrapsGame | None = None
+
+    # ── Setup ──────────────────────────────────
+
+    def setup(self):
+        Terminal.clear()
+        Terminal.banner()
+        name = input(f"{Terminal.WHITE}Seu nome, jogador: {Terminal.RESET}").strip() or "Jogador"
+        self.player = Player(name)
+        self.game   = CrapsGame(self.player)
+        Terminal.success(f"Bem-vindo, {name}! Saldo inicial: R${self.player.balance:.2f}")
+
+    # Escolha de aposta 
+
+    def _choose_bet(self):
+        Terminal.separator()
+        print(f"\n{Terminal.BOLD}  Tipos de aposta:{Terminal.RESET}")
+        print("  1 → Pass Line   (torce pelo 7/11, e pelo point)")
+        print("  2 → Don't Pass  (torce pelo 2/3/12, e contra o point)")
+        choice = Terminal.input_int("\n  Sua escolha [1-2]:", 1, 2)
+        bet_type = Bet.PASS_LINE if choice == 1 else Bet.DONT_PASS
+
+        max_bet = self.player.balance
+        amount  = Terminal.input_float(
+            f"  Valor da aposta (R$1.00 – R${max_bet:.2f}):",
+            self.MIN_BET, max_bet
+        )
+        self.player.place_bet(bet_type, amount)
+        Terminal.info(f"Aposta registrada: {self.player.bet}")
+
+    #  Uma rodada completa 
+
+    def _run_round(self):
+        self.game.reset_round()
+        self._choose_bet()
+
+        Terminal.separator()
+        print(f"\n{Terminal.BOLD}  ── FASE: COME-OUT ──{Terminal.RESET}")
+
+        while True:
+            input(f"\n{Terminal.DIM}  [ENTER para rolar]{Terminal.RESET}")
+            total, result = self.game.roll()             # agora vem primeiro
+            Terminal.roll_animation(self.game.dice)      # e a animação depois 
+
+            self._describe_result(result, total)
+
+            outcome = self.game.resolve(result)
+
+            if outcome is not None:          # rodada terminou
+                self.player.resolve_bet(outcome)
+                if outcome:
+                    Terminal.success(f"Você GANHOU! +R${self.player.bet.amount if self.player.bet else 0:.2f}  →  Saldo: R${self.player.balance:.2f}")
+                else:
+                    Terminal.error(f"Você PERDEU.  →  Saldo: R${self.player.balance:.2f}")
+                break
+
+            if result == RollResult.POINT_SET:
+                print(f"\n{Terminal.BOLD}  ── FASE: POINT = {self.game.point} ──{Terminal.RESET}")
+                Terminal.info(f"Acerte o {self.game.point} antes do 7 para ganhar.")
+
+    def _describe_result(self, result: RollResult, total: int):
+        msgs = {
+            RollResult.NATURAL   : f"🎉 Natural! {total} — vitória imediata no come-out!",
+            RollResult.CRAPS     : f"💀 Craps!  {total} — derrota imediata no come-out.",
+            RollResult.POINT_SET : f"📍 Point definido: {total}",
+            RollResult.POINT_HIT : f"🎉 Point atingido! {total} — você ganhou!",
+            RollResult.SEVEN_OUT : f"💀 Seven-out! 7 — você perdeu.",
+            RollResult.CONTINUE  : f"   {total} — continue rolando...",
+        }
+        print(f"  {msgs[result]}")
+
+    # ── Menu principal ─────────────────────────
+
+    def _main_menu(self) -> bool:
+        """Retorna False quando o jogador decide sair."""
+        Terminal.separator()
+        print(f"\n{Terminal.BOLD}  O que deseja fazer?{Terminal.RESET}")
+        print("  1 → Nova rodada")
+        print("  2 → Ver estatísticas")
+        print("  3 → Regras rápidas")
+        print("  0 → Sair")
+
+        choice = Terminal.input_int("  Escolha:", 0, 3)
+
+        if choice == 1:
+            return True
+        if choice == 2:
+            self._show_stats()
+            return True
+        if choice == 3:
+            self._show_rules()
+            return True
+        return False  # sair
+
+    def _show_stats(self):
+        Terminal.separator()
+        print(f"\n{Terminal.BOLD}  📊 Estatísticas de {self.player.name}:{Terminal.RESET}")
+        print(self.player.stats)
+
+    def _show_rules(self):
+        Terminal.separator()
+        print(f"""
+{Terminal.BOLD}  📜 REGRAS DO CRAPS (simplificado){Terminal.RESET}
+
+  {Terminal.CYAN}FASE COME-OUT (primeiro rolar){Terminal.RESET}
+    7 ou 11  →  Pass Line ganha  /  Don't Pass perde
+    2, 3 ou 12 →  Pass Line perde  /  Don't Pass ganha
+    4,5,6,8,9,10 → define o POINT, passa para a fase seguinte
+
+  {Terminal.CYAN}FASE POINT{Terminal.RESET}
+    Repetir o POINT  →  Pass Line ganha  /  Don't Pass perde
+    Tirar 7          →  Pass Line perde  /  Don't Pass ganha
+    Qualquer outro   →  continua rolando
+
+  {Terminal.CYAN}PAGAMENTO{Terminal.RESET}
+    Pass Line e Don't Pass pagam 1:1
+""")
+
+    # ── Encerramento ───────────────────────────
+
+    def _farewell(self):
+        Terminal.separator()
+        print(f"\n{Terminal.BOLD}  Obrigado por jogar, {self.player.name}!{Terminal.RESET}")
+        print(self.player.stats)
+        profit = self.player.balance - 500.0
+        color  = Terminal.GREEN if profit >= 0 else Terminal.RED
+        sign   = "+" if profit >= 0 else ""
+        print(f"\n  Resultado final: {color}{sign}R${profit:.2f}{Terminal.RESET}\n")
+
+    # ── Ponto de entrada ───────────────────────
+
+    def run(self):
+        Terminal.intro()
+        self.setup()
+
+        while True:
+            if self.player.balance < self.MIN_BET:
+                Terminal.error("Saldo insuficiente para apostar. Fim de jogo!")
+                break
+
+            if not self._main_menu():
+                break
+
+            # Apenas continua se o jogador escolheu "Nova rodada"
+            try:
+                self._run_round()
+            except KeyboardInterrupt:
+                print("\n")
+                break
+
+        self._farewell()
+
+
+# ─────────────────────────────────────────────
+#  ENTRY POINT
+# ─────────────────────────────────────────────
+
+if __name__ == "__main__":
+    CrapsController().run()
